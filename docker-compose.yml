@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  file-service:
+    build: .
+    container_name: wms-file-service
+    ports:
+      - "8808:8808"
+    volumes:
+      - ./file_records.db:/app/file_records.db
+    env_file:
+      - .env
+    restart: unless-stopped

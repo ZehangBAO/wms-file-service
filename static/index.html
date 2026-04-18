@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS 文件管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; }
+
+        .container { max-width: 800px; margin: 30px auto; padding: 0 20px; }
+
+        h1 { text-align: center; margin-bottom: 24px; color: #1a1a1a; font-size: 22px; }
+
+        .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 24px; margin-bottom: 20px; }
+        .card h2 { font-size: 16px; color: #555; margin-bottom: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+
+        label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
+        input, select { width: 100%; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
+        input:focus, select:focus { outline: none; border-color: #4096ff; box-shadow: 0 0 0 2px rgba(64,150,255,.15); }
+
+        .row { display: flex; gap: 12px; }
+        .row > div { flex: 1; }
+
+        .btn { display: inline-block; padding: 8px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; transition: .2s; }
+        .btn-primary { background: #1677ff; color: #fff; }
+        .btn-primary:hover { background: #4096ff; }
+        .btn-primary:disabled { background: #a0c4ff; cursor: not-allowed; }
+        .btn-sm { padding: 4px 12px; font-size: 12px; }
+        .btn-link { background: none; color: #1677ff; padding: 4px 8px; text-decoration: underline; }
+
+        .file-input-wrap { position: relative; border: 2px dashed #d9d9d9; border-radius: 6px; padding: 20px; text-align: center; color: #999; transition: .2s; margin-bottom: 12px; cursor: pointer; }
+        .file-input-wrap:hover { border-color: #4096ff; color: #4096ff; }
+        .file-input-wrap input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .file-input-wrap.has-file { border-color: #52c41a; color: #52c41a; }
+
+        .msg { padding: 10px 14px; border-radius: 4px; margin-top: 12px; font-size: 13px; display: none; }
+        .msg.success { display: block; background: #f6ffed; border: 1px solid #b7eb8f; color: #389e0d; }
+        .msg.error { display: block; background: #fff2f0; border: 1px solid #ffccc7; color: #cf1322; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px; background: #fafafa; border-bottom: 2px solid #f0f0f0; color: #666; font-weight: 600; }
+        td { padding: 8px; border-bottom: 1px solid #f0f0f0; }
+        tr:hover td { background: #f5f8ff; }
+
+        .empty { text-align: center; color: #bbb; padding: 30px; font-size: 14px; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📁 WMS 文件管理</h1>
+
+    <!-- 上传区域 -->
+    <div class="card">
+        <h2>上传文件</h2>
+        <div class="row">
+            <div>
+                <label>业务类型</label>
+                <select id="bizType">
+                    <option value="inbound">inbound（入库）</option>
+                    <option value="outbound">outbound（出库）</option>
+                    <option value="inventory">inventory（盘点）</option>
+                </select>
+            </div>
+            <div>
+                <label>业务单号</label>
+                <input type="text" id="bizId" placeholder="如 IN-1001">
+            </div>
+            <div>
+                <label>文件用途</label>
+                <select id="fileType">
+                    <option value="attachment">attachment（附件）</option>
+                    <option value="photo">photo（照片）</option>
+                    <option value="invoice">invoice（发票）</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="file-input-wrap" id="dropZone">
+            <span id="dropText">点击或拖拽文件到此处</span>
+            <input type="file" id="fileInput">
+        </div>
+
+        <button class="btn btn-primary" id="uploadBtn" disabled>上传</button>
+        <div class="msg" id="uploadMsg"></div>
+    </div>
+
+    <!-- 查询区域 -->
+    <div class="card">
+        <h2>查询文件列表</h2>
+        <div class="row">
+            <div>
+                <label>业务类型</label>
+                <select id="qBizType">
+                    <option value="inbound">inbound（入库）</option>
+                    <option value="outbound">outbound（出库）</option>
+                    <option value="inventory">inventory（盘点）</option>
+                </select>
+            </div>
+            <div>
+                <label>业务单号</label>
+                <input type="text" id="qBizId" placeholder="如 IN-1001">
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button class="btn btn-primary" id="queryBtn" style="width:100%;">查询</button>
+            </div>
+        </div>
+
+        <div id="fileList" style="margin-top: 16px;">
+            <div class="empty">输入单号后点击查询</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ===== 配置 =====
+    const API_BASE = window.location.origin;
+
+    // ===== 上传 =====
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const dropText = document.getElementById('dropText');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadMsg = document.getElementById('uploadMsg');
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) {
+            dropZone.classList.add('has-file');
+            dropText.textContent = fileInput.files[0].name;
+            uploadBtn.disabled = false;
+        }
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+        const bizId = document.getElementById('bizId').value.trim();
+        if (!bizId) { showMsg(uploadMsg, '请输入业务单号', 'error'); return; }
+        if (!fileInput.files.length) { showMsg(uploadMsg, '请选择文件', 'error'); return; }
+
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<span class="spinner"></span>上传中...';
+
+        const fd = new FormData();
+        fd.append('biz_type', document.getElementById('bizType').value);
+        fd.append('biz_id', bizId);
+        fd.append('file_type', document.getElementById('fileType').value);
+        fd.append('file', fileInput.files[0]);
+
+        try {
+            const res = await fetch(`${API_BASE}/api/files/upload`, { method: 'POST', body: fd });
+            const data = await res.json();
+            if (res.ok) {
+                showMsg(uploadMsg, `✅ ${data.message}   文件ID: ${data.id}`, 'success');
+                fileInput.value = '';
+                dropZone.classList.remove('has-file');
+                dropText.textContent = '点击或拖拽文件到此处';
+            } else {
+                showMsg(uploadMsg, `❌ ${data.detail || '上传失败'}`, 'error');
+            }
+        } catch (e) {
+            showMsg(uploadMsg, `❌ 网络错误: ${e.message}`, 'error');
+        }
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = '上传';
+    });
+
+    // ===== 查询 =====
+    document.getElementById('queryBtn').addEventListener('click', async () => {
+        const bizType = document.getElementById('qBizType').value;
+        const bizId = document.getElementById('qBizId').value.trim();
+        if (!bizId) { alert('请输入业务单号'); return; }
+
+        const listEl = document.getElementById('fileList');
+        listEl.innerHTML = '<div class="empty">加载中...</div>';
+
+        try {
+            const res = await fetch(`${API_BASE}/api/files?biz_type=${encodeURIComponent(bizType)}&biz_id=${encodeURIComponent(bizId)}`);
+            const files = await res.json();
+
+            if (!files.length) {
+                listEl.innerHTML = '<div class="empty">暂无文件</div>';
+                return;
+            }
+
+            let html = `<table><thead><tr><th>文件名</th><th>上传时间</th><th>操作</th></tr></thead><tbody>`;
+            files.forEach(f => {
+                const t = new Date(f.created_at).toLocaleString('zh-CN');
+                html += `<tr>
+                    <td>${escapeHtml(f.original_name)}</td>
+                    <td>${t}</td>
+                    <td><button class="btn btn-link btn-sm" onclick="preview('${f.id}')">预览</button></td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+            listEl.innerHTML = html;
+        } catch (e) {
+            listEl.innerHTML = `<div class="empty" style="color:#cf1322;">查询失败: ${e.message}</div>`;
+        }
+    });
+
+    // ===== 预览 =====
+    async function preview(fileId) {
+        try {
+            const res = await fetch(`${API_BASE}/api/files/${fileId}/preview`);
+            const data = await res.json();
+            if (res.ok) {
+                window.open(data.url, '_blank');
+            } else {
+                alert(data.detail || '获取预览链接失败');
+            }
+        } catch (e) {
+            alert('网络错误: ' + e.message);
+        }
+    }
+
+    // ===== 工具函数 =====
+    function showMsg(el, text, type) {
+        el.className = 'msg ' + type;
+        el.textContent = text;
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str || '';
+        return div.innerHTML;
+    }
+</script>
+</body>
+</html>

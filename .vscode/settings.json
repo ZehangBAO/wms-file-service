@@ -1,0 +1,28 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^pip install -r requirements\\.txt$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^pip install \"pydantic>=2\\.9\\.0\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^uvicorn main:app --host 0\\.0\\.0\\.0 --port 8001$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^pip install \"sqlalchemy>=2\\.0\\.36\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 -c \"import main; print\\('Import successful'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^uvicorn main:app --host 0\\.0\\.0\\.0 --port 8001 --log-level debug$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

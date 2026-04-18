@@ -1,0 +1,15 @@
+# 忽略真实的环境变量文件（千万别把腾讯云密钥传到 GitHub 上！）
+.env
+
+# 忽略本地 SQLite 数据库文件
+*.db
+*.sqlite3
+
+# 忽略 Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 虚拟环境
+venv/
+.venv/
