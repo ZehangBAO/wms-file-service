@@ -122,8 +122,17 @@ async def upload_file(
             Bucket=COS_BUCKET,
             Body=file_bytes,
             Key=cos_key,
-            ContentType=file.content_type,
+            ContentType=file.content_type or "application/octet-stream",
         )
+        # 如果是 product，额外备份一份到 SKU 文件夹（product/{biz_id}/{filename}）
+        if biz_type == "product":
+            cos_key_backup = f"product/{biz_id}/{stored_name}"
+            cos_client.put_object(
+                Bucket=COS_BUCKET,
+                Body=file_bytes,
+                Key=cos_key_backup,
+                ContentType=file.content_type or "application/octet-stream",
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上传腾讯云失败: {str(e)}")
 

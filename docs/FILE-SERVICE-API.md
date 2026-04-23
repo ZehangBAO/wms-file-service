@@ -78,6 +78,21 @@
 - 前端命名 → `invoice/2026/04/INV-20260423113057/INV-20260423113057_admin1_1.jpg`
 - 降级命名 → `invoice/2026/04/IN-1001/attachment_1713330000.jpg`
 
+#### Product SKU 自动备份
+
+当 `biz_type == "product"` 时，文件服务会在正常上传之外，**额外备份一份**到 SKU 根目录：
+
+| 路径类型 | COS Key | 数据库记录 |
+| -------- | ------- | ---------- |
+| 正常路径 | `product/{年}/{月}/{sku}/{filename}` | ✅ 记录 |
+| 备份路径 | `product/{sku}/{filename}` | ❌ 不记录 |
+
+示例（SKU = `SKU-001`，文件名 = `photo.jpg`）：
+- 正常路径：`product/2026/04/SKU-001/photo.jpg` ← 数据库记录此条
+- 备份路径：`product/SKU-001/photo.jpg` ← COS 多一份，作为产品图库永久存档
+
+> 备份路径按 SKU 组织（无年月层级），方便作为产品图库直接按 SKU 文件夹浏览。前端无需任何改动。
+
 #### 成功响应 `200`
 
 ```json
