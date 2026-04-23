@@ -1,7 +1,9 @@
 # main.py — WMS 文件上传微服务
 import os
+import re
 import time
 import uuid
+import urllib.parse
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -96,12 +98,23 @@ async def upload_file(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="文件为空")
 
-    # 1. 组装 COS 路径 (例如: inbound/2026/04/IN-1001/attachment_1713330000.jpg)
+    # 1. 组装 COS 路径，优先使用前端已重命名的文件名
     now = datetime.now()
-    ext = os.path.splitext(file.filename)[1].lower() or ".bin"
+    ext = os.path.splitext(file.filename or "file")[1].lower() or ".bin"
     ts = int(time.time())
-    stored_name = f"{file_type}_{ts}{ext}"
-    cos_key = f"{biz_type}/{now.year}/{now.month:02d}/{biz_id}/{stored_name}"
+    raw_name = (file.filename or "").strip()
+    safe_name = re.sub(r'[^\w\u4e00-\u9fa5._-]', '_', raw_name)
+    base_name = safe_name if safe_name else f"{file_type}_{ts}{ext}"
+
+    # 防重复：同路径下已有同名文件时追加 _1, _2, ...
+    stem, suffix = os.path.splitext(base_name)
+    stored_name = base_name
+    counter = 1
+    base_dir = f"{biz_type}/{now.year}/{now.month:02d}/{biz_id}"
+    while db.query(FileAsset).filter(FileAsset.cos_key == f"{base_dir}/{stored_name}").first():
+        stored_name = f"{stem}_{counter}{suffix}"
+        counter += 1
+    cos_key = f"{base_dir}/{stored_name}"
 
     # 2. 上传至腾讯云 COS
     try:
@@ -120,7 +133,7 @@ async def upload_file(
         biz_type=biz_type,
         biz_id=biz_id,
         file_type=file_type,
-        original_name=file.filename,
+        original_name=stored_name,
         stored_name=stored_name,
         cos_key=cos_key,
         bucket=COS_BUCKET,
@@ -158,8 +171,10 @@ def preview_file(file_id: str, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    # 签发 1 小时有效的私有读取链接
+    # 签发 1 小时有效的私有读取链接，附带正确文件名
+    disp_name = urllib.parse.quote(row.original_name or row.stored_name or "file", safe="")
     url = cos_client.get_presigned_url(
-        Method="GET", Bucket=row.bucket, Key=row.cos_key, Expired=3600
+        Method="GET", Bucket=row.bucket, Key=row.cos_key, Expired=3600,
+        Params={"response-content-disposition": f"attachment; filename*=UTF-8''{disp_name}"},
     )
     return {"url": url}

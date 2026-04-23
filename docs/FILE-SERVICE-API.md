@@ -59,15 +59,24 @@
 | `biz_type` | string  | ✅   | 业务类型，如 `inbound`（入库）、`outbound`（出库）    |
 | `biz_id`   | string  | ✅   | 业务单号，如 `IN-1001`                                |
 | `file_type`| string  | ❌   | 文件用途标签，默认 `attachment`。也可传 `photo`、`invoice` 等 |
-| `file`     | File    | ✅   | 要上传的文件（二进制）                                 |
+| `file`     | File    | ✅   | 要上传的文件（二进制）。**前端应在上传前将文件重命名为业务文件名**（如 `INV-20260423113057_admin1_1.jpg`） |
 
 #### COS 存储路径规则
 
+优先使用前端已设定的文件名（经过安全清洗），降级时使用时间戳命名：
+
 ```
-{biz_type}/{年}/{月}/{biz_id}/{file_type}_{时间戳}{扩展名}
+{biz_type}/{年}/{月}/{biz_id}/{cleaned_filename}
 ```
 
-示例：`inbound/2026/04/IN-1001/attachment_1713330000.jpg`
+| 场景 | stored_name 生成规则 |
+| ---- | -------------------- |
+| 前端已提供文件名 | 取 `file.filename`，用 `re.sub(r'[^\w\u4e00-\u9fa5._-]', '_', name)` 清洗非法字符 |
+| 文件名为空 | 降级为 `{file_type}_{时间戳}{扩展名}` |
+
+示例：
+- 前端命名 → `invoice/2026/04/INV-20260423113057/INV-20260423113057_admin1_1.jpg`
+- 降级命名 → `invoice/2026/04/IN-1001/attachment_1713330000.jpg`
 
 #### 成功响应 `200`
 
@@ -178,13 +187,15 @@ files.forEach((f) => {
 
 ```json
 {
-  "url": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/inbound/2026/04/IN-1001/photo_1713330000.jpg?sign=..."
+  "url": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/invoice/2026/04/INV-20260423113057/INV-20260423113057_admin1_1.jpg?sign=...&response-content-disposition=attachment%3B%20filename%2A%3DUTF-8%27%27INV-20260423113057_admin1_1.jpg"
 }
 ```
 
 | 字段  | 说明                                     |
 | ----- | ---------------------------------------- |
-| `url` | 带签名的 COS 临时访问链接（1 小时有效）   |
+| `url` | 带签名的 COS 临时访问链接（1 小时有效），附带 `response-content-disposition` 参数，浏览器下载时文件名自动显示为原始文件名 |
+
+> **下载文件名说明**：预签名 URL 携带 `response-content-disposition: attachment; filename*=UTF-8''<RFC5987编码文件名>`，支持中文及特殊字符，浏览器点击直接显示正确文件名（无需手动重命名）。
 
 #### 错误响应
 

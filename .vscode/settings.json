@@ -23,6 +23,12 @@
         "/^uvicorn main:app --host 0\\.0\\.0\\.0 --port 8001 --log-level debug$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "docker compose": true,
+        "pip": true,
+        "uvicorn": true,
+        "git add": true,
+        "git commit": true,
+        "git push": true
     }
 }
