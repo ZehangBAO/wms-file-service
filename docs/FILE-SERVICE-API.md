@@ -78,22 +78,57 @@
 - 前端命名 → `invoice/2026/04/INV-20260423113057/INV-20260423113057_admin1_1.jpg`
 - 降级命名 → `invoice/2026/04/IN-1001/attachment_1713330000.jpg`
 
-#### Product SKU 自动备份
+#### 产品图片自动压缩与多路径存储
 
-当 `biz_type == "product"` 时，文件服务会在正常上传之外，**额外备份一份**到 SKU 根目录：
+当 `biz_type == "product"` 且上传文件为图片（`image/*`）时，文件服务**自动完成三件事**：
 
-| 路径类型 | COS Key | 数据库记录 |
-| -------- | ------- | ---------- |
-| 正常路径 | `product/{年}/{月}/{sku}/{filename}` | ✅ 记录 |
-| 备份路径 | `product/{sku}/{filename}` | ❌ 不记录 |
+1. 压缩生成 3 种尺寸（original 1200×1200、medium 600×600、thumb 160×160）
+2. 每种尺寸写入 **3 条 COS 路径**（共 9 个 COS 对象）
+3. 返回所有 archive URL 供 WMS 写入 products 表
 
-示例（SKU = `SKU-001`，文件名 = `photo.jpg`）：
-- 正常路径：`product/2026/04/SKU-001/photo.jpg` ← 数据库记录此条
-- 备份路径：`product/SKU-001/photo.jpg` ← COS 多一份，作为产品图库永久存档
+| COS 路径 | 说明 | 写入策略 |
+| -------- | ---- | -------- |
+| `product/{年}/{月}/{sku}/{ts}_{size}.jpg` | 按日期分层的主路径 | 每次唯一，数据库记录 original 这条 |
+| `product/{sku}/latest/{size}.jpg` | 始终是最新上传的**主图** | **覆盖写**，无需知道日期就能访问当前图 |
+| `product/{sku}/archive/{YYYYMMDDHHMMSS}/{size}.jpg` | 每次上传独立子目录，**永不覆盖** | 保留完整历史，WMS 写入 products 表 |
 
-> 备份路径按 SKU 组织（无年月层级），方便作为产品图库直接按 SKU 文件夹浏览。前端无需任何改动。
+> **设计意图**：`latest/` 是"永久主图链接"——无论何时上传、URL 不变，适合展示；`archive/` 是"唯一历史记录"——每次上传有独立路径，适合写入数据库作精确追溯。无论月份如何变化，通过 `latest/` 始终能找到该 SKU 最新图片。
 
-#### 成功响应 `200`
+示例（SKU = `SKU-807`，上传时间 = `20260428172446`）：
+
+```
+product/2026/04/SKU-807/20260428172446_original.jpg  ← DB cos_key
+product/2026/04/SKU-807/20260428172446_medium.jpg
+product/2026/04/SKU-807/20260428172446_thumb.jpg
+
+product/SKU-807/latest/original.jpg   ← 始终指向最新上传（覆盖写）
+product/SKU-807/latest/medium.jpg
+product/SKU-807/latest/thumb.jpg
+
+product/SKU-807/archive/20260428172446/original.jpg  ← archive（永不覆盖）
+product/SKU-807/archive/20260428172446/medium.jpg
+product/SKU-807/archive/20260428172446/thumb.jpg
+```
+
+#### 成功响应 `200`（产品图片）
+
+```json
+{
+  "message": "上传成功",
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "image_original_url": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428172446/original.jpg",
+  "image_medium_url":   "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428172446/medium.jpg",
+  "image_thumb_url":    "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428172446/thumb.jpg",
+  "image_latest_thumb": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/latest/thumb.jpg"
+}
+```
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `image_*_url` | archive 路径（唯一不变，推荐 WMS products 表存储） |
+| `image_latest_thumb` | latest 路径（始终指向最新主图，适合页面展示） |
+
+#### 成功响应 `200`（非产品图片）
 
 ```json
 {
@@ -358,3 +393,146 @@ docker compose up -d --build
 - **在线预览**：点击预览按钮，新窗口打开 COS 预签名链接
 
 前端页面通过 `window.location.origin` 自动获取 API 地址，无需手动配置。
+
+---
+
+### 接口 D — 上传产品主图（专用）
+
+**`POST /files/product-image/{sku}`**
+
+专为 WMS 产品模块设计的产品图片上传接口。上传一张图片，自动生成 3 种尺寸，写入 `latest/`（始终可访问的主图）和 `archive/{timestamp}/`（历史存档，唯一不变）两条 COS 路径链。
+
+> 与接口 A 的区别：本接口无需传 `biz_type`/`biz_id` 表单字段，SKU 直接在 URL 中，更简洁。同时返回 latest 和 archive 两套 URL。
+
+#### 请求
+
+| 类型 | Content-Type |
+| ---- | ------------ |
+| 表单 | `multipart/form-data` |
+
+| 路径参数 | 类型   | 说明           |
+| -------- | ------ | -------------- |
+| `sku`    | string | 产品 SKU，如 `SKU-807` |
+
+| 表单字段 | 类型 | 必填 | 说明 |
+| -------- | ---- | ---- | ---- |
+| `file`   | File | ✅   | 图片文件，支持 `jpg/jpeg/png/webp`，最大 8MB |
+
+#### COS 写入路径（每次上传写 6 个 COS 对象）
+
+| 路径 | 说明 |
+| ---- | ---- |
+| `product/{sku}/latest/original.jpg` | 始终覆盖写（主图，永久稳定链接） |
+| `product/{sku}/latest/medium.jpg`   | 同上 |
+| `product/{sku}/latest/thumb.jpg`    | 同上 |
+| `product/{sku}/archive/{YYYYMMDDHHMMSS}/original.jpg` | 唯一历史记录（永不覆盖） |
+| `product/{sku}/archive/{YYYYMMDDHHMMSS}/medium.jpg`   | 同上 |
+| `product/{sku}/archive/{YYYYMMDDHHMMSS}/thumb.jpg`    | 同上 |
+
+#### 成功响应 `200`
+
+```json
+{
+  "success": true,
+  "sku": "SKU-807",
+  "image_original_url": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428092548/original.jpg",
+  "image_medium_url":   "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428092548/medium.jpg",
+  "image_thumb_url":    "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/archive/20260428092548/thumb.jpg",
+  "image_latest_thumb":    "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/latest/thumb.jpg",
+  "image_latest_medium":   "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/latest/medium.jpg",
+  "image_latest_original": "https://baozehang-1416231675.cos.ap-singapore.myqcloud.com/product/SKU-807/latest/original.jpg"
+}
+```
+
+| 字段 | 推荐用途 |
+| ---- | -------- |
+| `image_*_url`（archive） | 写入 WMS `products` 表，唯一且不变，精确追溯 |
+| `image_latest_*`（latest）| 直接展示用，无需更新数据库，始终显示最新上传 |
+
+#### 错误响应
+
+| 状态码 | 场景 | 示例 |
+| ------ | ---- | ---- |
+| `400` | 格式不支持 | `{"detail": "仅支持 jpg/jpeg/png/webp 格式"}` |
+| `400` | 文件为空 | `{"detail": "文件为空"}` |
+| `400` | 超过 8MB | `{"detail": "文件大小不能超过 8MB"}` |
+| `500` | COS 上传失败 | `{"detail": "图片处理或上传失败: ..."}` |
+
+#### 前端/WMS 调用示例
+
+```javascript
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+
+const res = await fetch(`http://服务器IP:8808/files/product-image/${sku}`, {
+  method: "POST",
+  body: formData,
+});
+const data = await res.json();
+
+// 写入 WMS products 表（archive URL，唯一稳定）
+product.image_original = data.image_original_url;
+product.image_medium   = data.image_medium_url;
+product.image_thumb    = data.image_thumb_url;
+
+// 或直接用 latest URL 在页面展示（无需写数据库）
+imgElement.src = data.image_latest_thumb;
+```
+
+---
+
+## 八、WMS 产品模块配套说明
+
+### 8.1 products 表建议字段
+
+为支持产品图片多尺寸存储，建议 WMS `products` 表新增以下字段（或已有 `image_url` 字段改为多字段）：
+
+```sql
+ALTER TABLE products ADD COLUMN image_original VARCHAR(500);
+ALTER TABLE products ADD COLUMN image_medium   VARCHAR(500);
+ALTER TABLE products ADD COLUMN image_thumb    VARCHAR(500);
+```
+
+存储 archive URL（来自接口 A 或接口 D 的响应），每次上传时覆盖更新。
+
+### 8.2 前端展示建议
+
+| 场景 | 推荐 URL |
+| ---- | -------- |
+| 产品列表缩略图 | `latest/thumb.jpg`（无需查 DB，固定链接，始终最新） |
+| 产品详情大图 | `latest/original.jpg` |
+| 图片历史追溯 | archive URL（从 DB 读取，唯一对应某次上传） |
+
+### 8.3 Nginx 反代补充（`/files/` 路径）
+
+接口 D 的路径前缀为 `/files/`，需在 Nginx 配置中额外添加：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # 接口 A/B/C：/api/files → 文件服务 8808
+    location /api/files {
+        proxy_pass http://127.0.0.1:8808;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 50m;
+    }
+
+    # 接口 D：/files/product-image → 文件服务 8808
+    location /files/ {
+        proxy_pass http://127.0.0.1:8808;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 10m;
+    }
+
+    # 其他 → 主系统 8000
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
