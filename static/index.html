@@ -116,7 +116,20 @@
 
 <script>
     // ===== 配置 =====
-    const API_BASE = window.location.origin;
+    // 优先读取后端注入/部署配置 FILE_SERVICE_BASE_URL，缺省回落当前 origin
+    const API_BASE = (window.FILE_SERVICE_BASE_URL || window.location.origin).replace(/\/$/, '');
+    const FILE_API_BASE = API_BASE + (window.FILE_SERVICE_PREFIX || '') + '/api/files';
+
+    // 带 15 秒超时的 fetch，避免请求挂起导致页面无限 loading
+    async function fileFetch(url, opts = {}, ms = 15000) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), ms);
+        try {
+            return await fetch(url, { ...opts, signal: ctrl.signal });
+        } finally {
+            clearTimeout(timer);
+        }
+    }
 
     // ===== 上传 =====
     const fileInput = document.getElementById('fileInput');
@@ -148,10 +161,10 @@
         fd.append('file', fileInput.files[0]);
 
         try {
-            const res = await fetch(`${API_BASE}/api/files/upload`, { method: 'POST', body: fd });
-            const data = await res.json();
+            const res = await fileFetch(`${FILE_API_BASE}/upload`, { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
-                showMsg(uploadMsg, `✅ ${data.message}   文件ID: ${data.id}`, 'success');
+                showMsg(uploadMsg, `✅ ${data.message || '上传成功'}   文件ID: ${data.id || data.file_id || ''}`, 'success');
                 fileInput.value = '';
                 dropZone.classList.remove('has-file');
                 dropText.textContent = '点击或拖拽文件到此处';
@@ -159,7 +172,7 @@
                 showMsg(uploadMsg, `❌ ${data.detail || '上传失败'}`, 'error');
             }
         } catch (e) {
-            showMsg(uploadMsg, `❌ 网络错误: ${e.message}`, 'error');
+            showMsg(uploadMsg, `❌ ${e.name === 'AbortError' ? '上传超时，请重试' : '网络错误: ' + e.message}`, 'error');
         }
         uploadBtn.disabled = false;
         uploadBtn.textContent = '上传';
@@ -175,10 +188,14 @@
         listEl.innerHTML = '<div class="empty">加载中...</div>';
 
         try {
-            const res = await fetch(`${API_BASE}/api/files?biz_type=${encodeURIComponent(bizType)}&biz_id=${encodeURIComponent(bizId)}`);
+            const res = await fileFetch(`${FILE_API_BASE}?biz_type=${encodeURIComponent(bizType)}&biz_id=${encodeURIComponent(bizId)}`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || ('HTTP ' + res.status));
+            }
             const files = await res.json();
 
-            if (!files.length) {
+            if (!Array.isArray(files) || !files.length) {
                 listEl.innerHTML = '<div class="empty">暂无文件</div>';
                 return;
             }
@@ -195,22 +212,22 @@
             html += `</tbody></table>`;
             listEl.innerHTML = html;
         } catch (e) {
-            listEl.innerHTML = `<div class="empty" style="color:#cf1322;">查询失败: ${e.message}</div>`;
+            listEl.innerHTML = `<div class="empty" style="color:#cf1322;">附件加载失败，请稍后重试</div>`;
         }
     });
 
     // ===== 预览 =====
     async function preview(fileId) {
         try {
-            const res = await fetch(`${API_BASE}/api/files/${fileId}/preview`);
-            const data = await res.json();
-            if (res.ok) {
+            const res = await fileFetch(`${FILE_API_BASE}/${fileId}/preview`);
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.url) {
                 window.open(data.url, '_blank');
             } else {
-                alert(data.detail || '获取预览链接失败');
+                alert(data.detail || '预览链接生成失败');
             }
         } catch (e) {
-            alert('网络错误: ' + e.message);
+            alert(e.name === 'AbortError' ? '预览超时，请重试' : '预览链接生成失败');
         }
     }
 
